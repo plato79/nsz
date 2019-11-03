@@ -17,7 +17,7 @@ import hashlib
 import traceback
 import fnmatch
 
-def solidCompress(filePath, compressionLevel = 18, outputDir = None, threads = -1, overwrite = False, filesAtTarget = []):
+def solidCompress(filePath, compressionLevel = 18, outputDir = None, threads = -1, overwrite = False):
 
 	ncaHeaderSize = 0x4000
 	
@@ -25,7 +25,7 @@ def solidCompress(filePath, compressionLevel = 18, outputDir = None, threads = -
 	container = Fs.factory(filePath)
 	container.open(filePath, 'rb')
 	
-	CHUNK_SZ = 0x1000000
+	CHUNK_SZ = 0x100000
 	
 	if outputDir is None:
 		nszPath = filePath[0:-1] + 'z'
@@ -44,25 +44,6 @@ def solidCompress(filePath, compressionLevel = 18, outputDir = None, threads = -
 			nspf.getRightsId()
 			titleId = nspf.titleId()
 			break # No need to go for other objects
-
-	# Checking output directory to see if the NSZ file with same title ID as NSP exists.
-	potentiallyExistingNszFile = ''
-	for file in filesAtTarget:
-		if fnmatch.fnmatch(file, '*%s*.nsz' % titleId):
-			potentiallyExistingNszFile = file
-
-	# If the file exists and '-w' parameter is not used than don't compress
-	if not overwrite:
-		if os.path.isfile(nszPath):
-			Print.info('{0} with the same file name already exists in the output directory.\n'\
-			'If you want to overwrite it use the -w parameter!'.format(nszFilename))
-			return
-		if potentiallyExistingNszFile:
-			potentiallyExistingNszFileName = os.path.basename(potentiallyExistingNszFile)
-			Print.info('{0} with the same title ID {1} but a different filename already exists in the output directory.\n'\
-			'If you want to continue with {2} keeping both files use the -w parameter!'
-			.format(potentiallyExistingNszFileName, titleId, nszFilename))
-			return
 
 	Print.info('compressing (level %d) %s -> %s' % (compressionLevel, filePath, nszPath))
 	
@@ -128,7 +109,10 @@ def solidCompress(filePath, compressionLevel = 18, outputDir = None, threads = -
 						
 						partNr = 0
 						bar.update(f.tell())
-						cctx = zstandard.ZstdCompressor(level=compressionLevel)
+						if threads > 1:
+							cctx = zstandard.ZstdCompressor(level=compressionLevel, threads=threads)
+						else:
+							cctx = zstandard.ZstdCompressor(level=compressionLevel)
 						compressor = cctx.stream_writer(f)
 						while True:
 						

@@ -6,7 +6,6 @@ import sys
 import os
 import re
 import pathlib
-import urllib3
 import json
 import traceback
 
@@ -24,8 +23,8 @@ import random
 import queue
 import nut
 import nsz
+from nsz import FileExistingChecks
 import glob
-import re
 
 # I think we should definitely change the code below.
 # If nsz.py executed like this:
@@ -49,7 +48,6 @@ err = []
 
 if __name__ == '__main__':
 	try:
-		urllib3.disable_warnings()
 
 		#signal.signal(signal.SIGINT, handler)
 
@@ -63,8 +61,8 @@ if __name__ == '__main__':
 		parser.add_argument('-B', '--block', action="store_true", default=False, help='Uses highly multithreaded block compression with random read access allowing compressed games to be played without decompression in the future however this comes with a low compression ratio cost. Current title installers do not support this yet.')
 		parser.add_argument('-s', '--bs', type=int, default=20, help='Block Size for random read access 2^x while x between 14 and 32. Default is 20 => 1 MB. Current title installers do not support this yet.')
 		parser.add_argument('-V', '--verify', action="store_true", default=False, help='Verifies files after compression raising an unhandled exception on hash mismatch and verify existing NSP and NSZ files when given as parameter')
-		parser.add_argument('-t', '--threads', type=int, default=-1, help='Number of threads to compress with. Usless without enabeling block compression using -B. Numbers < 1 corresponds to the number of logical CPU cores.')
-		parser.add_argument('-o', '--output', help='Directory to save the output NSZ files')
+		parser.add_argument('-t', '--threads', type=int, default=-1, help='Number of threads to compress with. Numbers < 1 corresponds to the number of logical CPU cores.')
+		parser.add_argument('-o', '--output', default="", help='Directory to save the output NSZ files')
 		parser.add_argument('-w', '--overwrite', action="store_true", default=False, help='Continues even if there already is a file with the same name or title id inside the output directory')
 		parser.add_argument('-r', '--rm-old-version', action="store_true", default=False, help='Removes older version if found')
 		parser.add_argument('-i', '--info', help='Show info about title or file')
@@ -75,7 +73,7 @@ if __name__ == '__main__':
 
 		
 		args = parser.parse_args()
-
+		outfolder = args.output if args.output else os.path.join(os.path.abspath('.'))
 
 		Print.info('                        ,;:;;,')
 		Print.info('                       ;;;;;')
@@ -101,105 +99,38 @@ if __name__ == '__main__':
 			nsp.pack(args.file)
 		
 		if args.C:
-			filesAtTarget = glob.glob(os.path.join(os.path.abspath('.' and args.output),'*.nsz'))
+			targetDict = FileExistingChecks.CreateTargetDict(outfolder, ".nsz")
 			for i in args.file:
 				for filePath in expandFiles(i):
 					try:
 						if filePath.endswith('.nsp'):
-							# If filename includes titleID this will speed up skipping existing files immensely.
-							# maybe we should make this a method or something? 
-							titleId = re.search(r'0100[0-9A-Fa-f]{12}',filePath).group()
-							version = re.search(r'\[v\d+\]',filePath).group()
-							versionNumber = int(re.search(r'\d+',version).group())
-							potentiallyExistingNszFile = ''
-							for file in filesAtTarget:
-								if re.match(r'.*%s.*\[v%s\]\.nsz' % (titleId,versionNumber),file):
-									potentiallyExistingNszFile = file
-									break
-								# elif fnmatch.fnmatch(file, '*%s*.nsz' % titleId):
-								# File extension check should be case insensitive I think.
-								
-								elif re.match(r'.*%s.*\.nsz' % titleId, file):
-									targetVersion = re.search(r'\[v\d+\]',file).group()
-									targetVersionNumber = int(re.search(r'\d+',targetVersion).group())
-									Print.info('Target Version: %s ' % targetVersionNumber)
-									if targetVersionNumber < versionNumber:
-										Print.info('Target file is an old update')
-										if args.rm_old_version:
-											Print.info('Deleting old update of the file...')
-											os.remove(file)
-							if not args.overwrite:
-								# While we could also move filename check here, it doesn't matter much, because
-								# we check filename without reading anything from nsp so it's fast enough
-
-								# if os.path.isfile(nszPath):
-								# 	Print.info('{0} with the same file name already exists in the output directory.\n'\
-								# 	'If you want to overwrite it use the -w parameter!'.format(nszFilename))
-								# 	continue
-								if potentiallyExistingNszFile:
-									potentiallyExistingNszFileName = os.path.basename(potentiallyExistingNszFile)
-									Print.info('{0} with the same title ID {1} but a different filename already exists in the output directory.\n'\
-									'If you want to continue with {2} keeping both files use the -w parameter!'
-									.format(potentiallyExistingNszFileName, titleId, potentiallyExistingNszFile))
-									continue
-							
-							nsz.compress(filePath, 18 if args.level is None else args.level, args.block, args.bs, args.output, args.threads, args.overwrite, args.verify, filesAtTarget)
+							if not FileExistingChecks.AllowedToWriteOutfile(filePath, ".nsz", targetDict, args.rm_old_version, args.overwrite):
+								continue
+							nsz.compress(filePath, args)
 					except KeyboardInterrupt:
 						raise
 					except BaseException as e:
 						Print.error('Error when compressing file: %s' % filePath)
-						err.append({"filename":filePath,"error":traceback.format_exc() })				
+						err.append({"filename":filePath,"error":traceback.format_exc() })
 						traceback.print_exc()
-#						raise
+						#raise
 						
 		if args.D:
-			filesAtTarget = glob.glob(os.path.join(os.path.abspath('.' and args.output),'*.nsp'))
+			targetDict = FileExistingChecks.CreateTargetDict(outfolder, ".nsp")
 			for i in args.file:
 				for filePath in expandFiles(i):
 					try:
 						if filePath.endswith('.nsz'):
-							# If filename includes titleID this will speed up skipping existing files immensely.
-							# maybe we should make this a method or something? 
-							titleId = re.search(r'0100[0-9A-Fa-f]{12}',filePath).group()
-							version = re.search(r'\[v\d+\]',filePath).group()
-							versionNumber = int(re.search(r'\d+',version).group())
-							potentiallyExistingNspFile = ''
-							for file in filesAtTarget:
-								if re.match(r'.*%s.*\[v%s\]\.nsz' % (titleId,versionNumber),file):
-									potentiallyExistingNspFile = file
-									break
-								elif re.match(r'.*%s.*\.(?i)nsz' % titleId, file):
-									targetVersion = re.search(r'\[v\d+\]',file).group()
-									targetVersionNumber = int(re.search(r'\d+',targetVersion).group())
-									Print.info('Target Version: %s ' % targetVersionNumber)
-									if targetVersionNumber < versionNumber:
-										Print.info('Target file is an old update')
-										if args.rm_old_version:
-											Print.info('Deleting old update of the file...')
-											os.remove(file)
-							if not args.overwrite:
-								# While we could also move filename check here, it doesn't matter much, because
-								# we check filename without reading anything from nsp so it's fast enough
-
-								# if os.path.isfile(nszPath):
-								# 	Print.info('{0} with the same file name already exists in the output directory.\n'\
-								# 	'If you want to overwrite it use the -w parameter!'.format(nszFilename))
-								# 	continue
-								if potentiallyExistingNspFile:
-									potentiallyExistingNspFileName = os.path.basename(potentiallyExistingNspFile)
-									Print.info('{0} with the same title ID {1} but a different filename already exists in the output directory.\n'\
-									'If you want to continue with {2} keeping both files use the -w parameter!'
-									.format(potentiallyExistingNspFileName, titleId, potentiallyExistingNspFile))
-									continue
-
+							if not FileExistingChecks.AllowedToWriteOutfile(filePath, ".nsp", targetDict, args.rm_old_version, args.overwrite):
+								continue
 							nsz.decompress(filePath, args.output)
 					except KeyboardInterrupt:
 						raise
 					except BaseException as e:
 						Print.error('Error when decompressing file: %s' % filePath)
-						err.append({"filename":filePath,"error":traceback.format_exc() })				
+						err.append({"filename":filePath,"error":traceback.format_exc() })
 						traceback.print_exc()
-#						raise
+						#raise
 		
 		if args.info:
 			f = Fs.factory(args.info)
@@ -221,13 +152,12 @@ if __name__ == '__main__':
 						raise
 					except BaseException as e:
 						Print.error('Error when verifying file: %s' % filePath)
-						err.append({"filename":filePath,"error":traceback.format_exc() })				
+						err.append({"filename":filePath,"error":traceback.format_exc() })
 						traceback.print_exc()
-#						raise
-
-
+						#raise
 		
-		if len(sys.argv)==1:
+		
+		if len(sys.argv) == 1:
 			pass
 
 	except KeyboardInterrupt:
